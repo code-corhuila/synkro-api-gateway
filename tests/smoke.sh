@@ -30,8 +30,17 @@ check "no Authorization -> 401" "401" "$status"
 #    token, so the end-to-end result is still 401, but for a different
 #    reason than test 2 — if this one passed without the gateway actually
 #    forwarding the request, that would be a false positive worth noticing.
+#    Where synkro-products-api isn't running (CI), set
+#    PRODUCTS_API_AVAILABLE=false: the forwarded request then ends in
+#    502/503, which still proves it got past the gateway's own 401 gate.
 status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer not-a-real-token" "$BASE/api/v1/products")
-check "malformed-but-present token forwarded to upstream" "401" "$status"
+if [ "${PRODUCTS_API_AVAILABLE:-true}" = "true" ]; then
+  check "malformed-but-present token forwarded to upstream" "401" "$status"
+elif [ "$status" = "502" ] || [ "$status" = "503" ]; then
+  echo "PASS: malformed-but-present token forwarded (products-api absent, got $status)"; PASS=$((PASS+1))
+else
+  echo "FAIL: malformed-but-present token forwarded (products-api absent, expected 502/503, got $status)"; FAIL=$((FAIL+1))
+fi
 
 # 4. A path whose upstream doesn't exist yet answers 502/503, never a raw
 #    connection error or an NGINX default error page.
