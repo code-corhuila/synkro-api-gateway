@@ -23,3 +23,23 @@ branch into another: `merge develop -> qa` and `merge qa -> main` do not exist i
 rule.
 
 Full policy: `00-governance/branching-policy.md` in `synkro-docs`.
+
+## Running locally
+
+```bash
+docker network inspect platform >/dev/null 2>&1 || docker network create platform
+cp .env.example .env
+cd deploy && docker compose --env-file ../.env up -d --build
+```
+
+Upstreams are resolved per request, so the gateway starts even when none of them is running; their
+routes answer `503` until the service joins the `platform` network.
+
+## Running the tests
+
+```bash
+./tests/smoke.sh
+```
+
+Test 3 expects `synkro-products-api` to be running on the `platform` network. Without it, run
+`PRODUCTS_API_AVAILABLE=false ./tests/smoke.sh` (as CI does).
