@@ -77,13 +77,17 @@ fi
 
 # 7. Rate limiting — run LAST: it deliberately exhausts the limiter, which
 #    would pollute every test above if it ran earlier.
-over_limit=0
-for i in $(seq 1 30); do
-  status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer x.y.z" "$BASE/api/v1/products")
-  if [ "$status" = "429" ]; then over_limit=1; break; fi
-done
-[ "$over_limit" = "1" ] && { echo "PASS: rate limit triggers 429 under burst"; PASS=$((PASS+1)); } \
-                         || { echo "FAIL: rate limit never triggered after 30 rapid requests"; FAIL=$((FAIL+1)); }
+#    The burst goes out from ONE curl process in parallel: a loop spawning
+#    one curl per request is slow enough on some hosts (~90ms each on
+#    Windows) to stay under 10 r/s and never exhaust the bucket.
+burst_args=()
+for i in $(seq 1 40); do burst_args+=(-o /dev/null "$BASE/api/v1/products"); done
+codes=$(curl -s -Z --parallel-max 40 -w "%{http_code}\n" -H "Authorization: Bearer x.y.z" "${burst_args[@]}")
+if printf '%s\n' "$codes" | grep -qx "429"; then
+  echo "PASS: rate limit triggers 429 under burst"; PASS=$((PASS+1))
+else
+  echo "FAIL: rate limit never triggered after 40 parallel requests (got: $(printf '%s ' $codes))"; FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
