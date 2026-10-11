@@ -43,8 +43,10 @@ else
 fi
 
 # 4. A path whose upstream doesn't exist yet answers 502/503, never a raw
-#    connection error or an NGINX default error page.
-status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer x.y.z" "$BASE/api/v1/auth/login")
+#    connection error or an NGINX default error page. login is public, so
+#    this sends no Authorization: a 502/503 here also proves the gateway
+#    itself let an unauthenticated request through.
+status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/auth/login")
 if [ "$status" = "502" ] || [ "$status" = "503" ]; then
   echo "PASS: nonexistent upstream returns 502/503 (got $status)"
   PASS=$((PASS+1))
@@ -99,8 +101,8 @@ check_passes_gateway() {
   fi
 }
 
-status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/auth/login")
-check_passes_gateway "login without Authorization is not rejected by the gateway" "$status"
+# (login without Authorization is covered by test 4, which spares login's
+# small rate budget.)
 
 status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/v1/auth/refresh")
 check_passes_gateway "refresh without Authorization is not rejected by the gateway" "$status"
