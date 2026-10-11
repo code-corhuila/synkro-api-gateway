@@ -93,7 +93,7 @@ server {
     # `location =` wins over any regex location, so the regex below keeps
     # protecting register, logout, users and service-tokens.
     location = /api/v1/auth/login {
-        include /etc/nginx/snippets/gateway-public.conf;
+        include /etc/nginx/snippets/gateway-base.conf;
         limit_req zone=login burst=4 nodelay;
         error_page 429 = @ratelimited_login;
         set $upstream http://synkro-auth-api:8080;
@@ -102,8 +102,6 @@ server {
 
     location = /api/v1/auth/refresh {
         include /etc/nginx/snippets/gateway-public.conf;
-        limit_req zone=gateway burst=20 nodelay;
-        error_page 429 = @ratelimited;
         set $upstream http://synkro-auth-api:8080;
         proxy_pass $upstream;
     }
@@ -112,31 +110,31 @@ server {
     # match without NGINX's automatic trailing-slash 301, while
     # /api/v1/productsfoo does not.
     location ~ ^/api/v1/auth(/|$) {
-        include /etc/nginx/snippets/gateway-common.conf;
+        include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-auth-api:8080;
         proxy_pass $upstream;
     }
 
     location ~ ^/api/v1/customers(/|$) {
-        include /etc/nginx/snippets/gateway-common.conf;
+        include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-customers-api:8080;
         proxy_pass $upstream;
     }
 
     location ~ ^/api/v1/(products|stock-alerts)(/|$) {
-        include /etc/nginx/snippets/gateway-common.conf;
+        include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-products-api:8080;
         proxy_pass $upstream;
     }
 
     location ~ ^/api/v1/sales(/|$) {
-        include /etc/nginx/snippets/gateway-common.conf;
+        include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-sales-api:8080;
         proxy_pass $upstream;
     }
 
     location ~ ^/api/v1/sagas(/|$) {
-        include /etc/nginx/snippets/gateway-common.conf;
+        include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-workflow:8080;
         proxy_pass $upstream;
     }
