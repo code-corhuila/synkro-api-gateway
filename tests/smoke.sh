@@ -152,6 +152,32 @@ fi
 status=$(curl -s -o /dev/null -w "%{http_code}" -X OPTIONS -H "Origin: http://localhost:5173" -H "Access-Control-Request-Method: POST" "$BASE/api/v1/auth/login")
 check "login preflight -> 204" "204" "$status"
 
+# 9. Login has its own, much tighter rate limit (security-threat-model S-1).
+#    It exhausts only the login zone, so it runs before test 7 and then
+#    proves a protected route is still served from the untouched general zone.
+login_args=()
+for i in $(seq 1 15); do login_args+=(-o /dev/null "$BASE/api/v1/auth/login"); done
+codes=$(curl -s -Z --parallel-max 15 -X POST -w "%{http_code}\n" "${login_args[@]}")
+if printf '%s\n' "$codes" | grep -qx "429"; then
+  echo "PASS: login rate limit triggers 429 under burst"; PASS=$((PASS+1))
+else
+  echo "FAIL: login rate limit never triggered after 15 parallel requests (got: $(printf '%s ' $codes))"; FAIL=$((FAIL+1))
+fi
+
+headers=$(curl -s -D - -o /dev/null -X POST "$BASE/api/v1/auth/login" | tr -d '\r')
+if printf '%s\n' "$headers" | grep -q "^HTTP/.* 429" && printf '%s\n' "$headers" | grep -qi "^Retry-After: [0-9]"; then
+  echo "PASS: login 429 carries Retry-After"; PASS=$((PASS+1))
+else
+  echo "FAIL: login 429 with Retry-After not seen (got: $(printf '%s\n' "$headers" | head -1))"; FAIL=$((FAIL+1))
+fi
+
+status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer x.y.z" "$BASE/api/v1/products")
+if [ "$status" != "429" ]; then
+  echo "PASS: protected route unaffected by the exhausted login limit (got $status)"; PASS=$((PASS+1))
+else
+  echo "FAIL: protected route throttled by the login limit (got 429)"; FAIL=$((FAIL+1))
+fi
+
 # 7. Rate limiting — run LAST: it deliberately exhausts the limiter, which
 #    would pollute every test above if it ran earlier.
 #    The burst goes out from ONE curl process in parallel: a loop spawning
