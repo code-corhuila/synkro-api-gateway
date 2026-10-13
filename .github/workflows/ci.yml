@@ -20,3 +20,32 @@ jobs:
           test -f .github/pull_request_template.md
           test -f .env.example
           echo "Common files present."
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    env:
+      # synkro-products-api isn't started here; test 3 then expects the
+      # forwarded request to end in 502/503 instead of the upstream's 401.
+      PRODUCTS_API_AVAILABLE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the platform network
+        run: docker network create platform
+      - name: Build and start the gateway
+        run: |
+          cp .env.example .env
+          cd deploy && docker compose --env-file ../.env up -d --build
+      - name: Wait for the gateway
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Run smoke tests
+        run: |
+          chmod +x tests/smoke.sh
+          ./tests/smoke.sh
+      - name: Gateway logs
+        if: failure()
+        run: cd deploy && docker compose logs
