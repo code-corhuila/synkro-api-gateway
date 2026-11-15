@@ -1,50 +1,124 @@
 # synkro-api-gateway
 
-> Single entry point: authentication, routing and rate limiting
+> NGINX entry point that routes public HTTP requests, requires credentials on protected paths and applies rate/CORS/correlation policy.
 
-Part of the **SynkroTech SAS Sales Management System** — organization `code-corhuila`.
-Governance and documentation live in [`synkro-docs`](https://github.com/code-corhuila/synkro-docs).
+Part of the **SynkroTech SAS Sales Management System**. Architecture, decisions and
+contracts live in [synkro-docs](https://github.com/code-corhuila/synkro-docs).
 
-## Branching
+**Quick start:** from this root, prepare `.env`, provision platform if absent, then start `deploy/compose.yml` with Docker Compose. See [Getting started](#getting-started).
 
-Three permanent branches. **None of them accepts a direct commit** — you enter through a child
-branch and leave through a Pull Request.
+## What it does
 
+- Routes Auth, Customers, Products, Sales and Workflow prefixes to their owning services.
+- Checks credential presence on protected routes; each service verifies the token cryptographically.
+- Applies general and login-specific rate limits, CORS and X-Correlation-Id propagation.
+- Keeps startup independent of upstream availability using per-request DNS resolution.
+
+## Where it fits
+
+```mermaid
+flowchart LR
+  Host["synkro-front"] --> Gateway["synkro-api-gateway"]
+  Gateway --> Auth["synkro-auth-api"]
+  Gateway --> Customers["synkro-customers-api"]
+  Gateway --> Products["synkro-products-api"]
+  Gateway --> Sales["synkro-sales-api"]
+  Gateway --> Workflow["synkro-workflow"]
 ```
-develop  <--PR--  feat/... fix/... chore/...
-qa       <--PR--  qa/...
-main     <--PR--  release/...  hotfix/...
-```
 
-Promotion happens **by re-application** (`git cherry-pick -x`), never by merging one permanent
-branch into another: `merge develop -> qa` and `merge qa -> main` do not exist in this model.
+The gateway publishes backend port 8000. Domain APIs remain internal to platform; the Host exposes the browser application separately.
 
-`main` requires **1 approval from `ariel5253`**. On `develop` and `qa` the team sets its own review
-rule.
+## Tech stack
 
-Full policy: `00-governance/branching-policy.md` in `synkro-docs`.
+| Component | Choice |
+|---|---|
+| Proxy | NGINX 1.27 Alpine |
+| Configuration | envsubst-rendered template and reusable snippets |
+| Tests | Bash smoke suite and curl |
+| Runtime | Docker service; public HTTP 8000 |
 
-## Running locally
+## Dependencies
+
+| Depends on | Purpose | Configuration |
+|---|---|---|
+| platform | Internal name resolution and connectivity | External Docker network |
+| Domain APIs and Workflow | Upstream operation owners | Named internal upstreams on 8080 |
+
+## Getting started
+
+From this root in **Bash** (Git Bash or WSL on Windows), with Docker Desktop's Linux engine:
 
 ```bash
 docker network inspect platform >/dev/null 2>&1 || docker network create platform
 cp .env.example .env
-cd deploy && docker compose --env-file ../.env up -d --build
+docker compose -f deploy/compose.yml --env-file .env up -d --build
+curl http://localhost:8000/health
 ```
 
-Upstreams are resolved per request, so the gateway starts even when none of them is running; their
-routes answer `503` until the service joins the `platform` network.
+Upstreams can join later; unavailable services produce a controlled 503.
 
-## Running the tests
+For the complete platform, start from [synkro-infra-postgres](https://github.com/code-corhuila/synkro-infra-postgres).
+
+## Configuration
+
+The committed [.env.example](.env.example) is the configuration inventory.
+Its values are examples; required inputs and defaults follow its comments and the
+owning implementation. Keep real secrets in protected local files.
+
+| Variable | Purpose |
+|---|---|
+| `CORS_ALLOWED_ORIGINS` | Connection address, origin or build-time entry point |
+| `RATE_LIMIT_PER_SECOND` | Rate limit per second |
+
+## Interface
+
+| Public path | Destination / policy |
+|---|---|
+| GET /health | Gateway health; public |
+| POST /api/v1/auth/login; POST /refresh | Public Auth flows; login has a tighter rate budget |
+| /api/v1/auth/... | Auth; remaining paths require Authorization |
+| /api/v1/customers/... | Customers |
+| /api/v1/products/...; /api/v1/stock-alerts/... | Products |
+| /api/v1/sales/... | Sales |
+| /api/v1/sagas/... | Workflow |
+
+Unknown routes return 404. Missing credentials, rate limits and unavailable upstreams use the shared error envelope. Stock-reservation routes remain internal service calls.
+
+## Project structure
+
+```text
+templates/     routes, upstream resolution and response policy
+snippets/      common headers, CORS and protected/public routing
+deploy/        NGINX Dockerfile and Compose service
+tests/         smoke checks against the running gateway
+docs/          standalone operation and test details
+```
+
+## Testing
+
+From this root in **Bash**, against the explicitly prepared test layout:
 
 ```bash
 ./tests/smoke.sh
 ```
 
-Test 3 expects `synkro-products-api` to be running on the `platform` network. Without it, run
-`PRODUCTS_API_AVAILABLE=false ./tests/smoke.sh` (as CI does).
+Test 3 needs Products, while tests 4/8 expect Auth to be absent. The suite is not a generic check against an arbitrary live platform. Its rate-limit reset and PRODUCTS_API_AVAILABLE option are retained in the testing guide.
 
-`POST /api/v1/auth/login` has its own rate limit (5 quick attempts per IP, then one per minute), so
-the smoke suite can only run about once a minute against the same gateway. Restart it
-(`docker compose restart`) to reset the limiter between runs. Tests 4 and 8 expect
-`synkro-auth-api` to be absent (502/503).
+## Branching and contributing
+
+Use a `feat/`, `fix/` or `chore/` child branch and a PR into `develop`.
+Permanent branches are `develop`, `qa` and `main`; none accepts direct commits.
+Promote through a `qa-<description>` or release child with `git cherry-pick -x`.
+`main` requires approval from `ariel5253`. Use English Conventional Commits.
+See [Git conventions](https://github.com/code-corhuila/synkro-docs/blob/main/00-governance/git-conventions.md).
+
+## Further documentation
+
+- [Local development](docs/local-development.md).
+- [Testing](docs/testing.md).
+- [Domain rules](https://github.com/code-corhuila/synkro-docs/blob/main/02-domain/entities-and-rules.md), [contracts](https://github.com/code-corhuila/synkro-docs/tree/main/07-api/contracts/openapi) and [testing strategy](https://github.com/code-corhuila/synkro-docs/blob/main/11-quality/testing-strategy.md).
+
+<!-- Preserve previously published README section links. -->
+<a id="branching"></a>
+<a id="running-locally"></a>
+<a id="running-the-tests"></a>
