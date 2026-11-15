@@ -23,13 +23,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           repository: code-corhuila/synkro-customers-api
           ref: cbd67c302c9649e417eaa69934a9741f3453c679
           path: customer-source
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           repository: code-corhuila/synkro-workflow
           ref: 9c604f5948f27db6c43b5fca721d455651a81008
           path: workflow-source
