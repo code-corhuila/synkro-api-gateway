@@ -60,9 +60,28 @@ limit_req_zone $binary_remote_addr zone=gateway:10m rate=${RATE_LIMIT_PER_SECOND
 limit_req_zone $binary_remote_addr zone=login:10m rate=1r/m;
 limit_req_status 429;
 
+# Empty keys exclude writes, search and the workflow's read-by-id from listing quotas.
+map "$request_method:$uri" $customers_list_client {
+    default "";
+    ~^(GET|HEAD):/api/v1/customers/?$ $binary_remote_addr;
+}
+map $customers_list_client $customers_list_global {
+    "" "";
+    default customers-list;
+}
+# Per-IP leaky bucket: rate is the sustained average; burst bounds immediate work.
+limit_req_zone $customers_list_client zone=customers_list:10m rate=${CUSTOMERS_LIST_RATE_PER_MINUTE}r/m;
+# Aggregate admission also bounds distributed traffic after proxy timeout releases a slot.
+# Conservative MVP budget: three immediate admissions and twelve per minute thereafter.
+# Customers has ten DB slots and bounded SQL operations; listing must leave room for point reads.
+limit_req_zone $customers_list_global zone=customers_list_total:1m rate=12r/m;
+limit_conn_zone $customers_list_global zone=customers_list_active:1m;
+
 server {
     listen 8000;
     server_tokens off;
+    recursive_error_pages on;
+    proxy_connect_timeout 2s;
 
     access_log /dev/stdout gateway_json;
 
@@ -108,6 +127,29 @@ server {
         return 429 '{"error":"TOO_MANY_REQUESTS","message":"too many login attempts, retry later","traceId":"$correlation_id"}';
     }
 
+    location @ratelimited_customers_list {
+        default_type application/json;
+        include /etc/nginx/snippets/response-headers.conf;
+        add_header Retry-After ${CUSTOMERS_LIST_RETRY_AFTER} always;
+        return 429 '{"error":"TOO_MANY_REQUESTS","message":"customer list capacity exceeded, retry later","traceId":"$correlation_id"}';
+    }
+
+    location @customers_list {
+        include /etc/nginx/snippets/gateway-authorization.conf;
+        limit_req zone=gateway burst=20 nodelay;
+        limit_req zone=customers_list burst=${CUSTOMERS_LIST_BURST} nodelay;
+        limit_req zone=customers_list_total burst=2 nodelay;
+        limit_conn customers_list_active ${CUSTOMERS_LIST_MAX_CONCURRENT};
+        limit_conn_status 429;
+        error_page 429 = @ratelimited_customers_list;
+        proxy_connect_timeout ${CUSTOMERS_LIST_CONNECT_TIMEOUT_SECONDS}s;
+        proxy_send_timeout ${CUSTOMERS_LIST_SEND_TIMEOUT_SECONDS}s;
+        proxy_read_timeout ${CUSTOMERS_LIST_READ_TIMEOUT_SECONDS}s;
+        proxy_next_upstream off;
+        set $upstream http://synkro-customers-api:8080;
+        proxy_pass $upstream;
+    }
+
     location @upstream_unavailable {
         default_type application/json;
         return 503 '{"error":"SERVICE_UNAVAILABLE","message":"the upstream service is not reachable","traceId":"$correlation_id"}';
@@ -141,6 +183,8 @@ server {
     }
 
     location ~ ^/api/v1/customers(/|$) {
+        error_page 418 = @customers_list;
+        if ($customers_list_client != "") { return 418; }
         include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-customers-api:8080;
         proxy_pass $upstream;
