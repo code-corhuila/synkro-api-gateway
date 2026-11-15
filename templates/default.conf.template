@@ -24,6 +24,21 @@ map $http_origin $cors_allow_origin {
     "${CORS_ALLOWED_ORIGINS}" "${CORS_ALLOWED_ORIGINS}";
 }
 
+# Access log without the query string. Customer lookups carry personal data
+# (identityDocument, email) in the query, so the log records only the path:
+# $request, $request_uri, $args and $query_string never appear in it, and
+# neither do Authorization or bodies. The correlation id ties a line to the
+# client's request and to the upstream's own logs.
+map $request_uri $log_path {
+    default "";
+    "~^(?<bare_path>[^?]*)" $bare_path;
+}
+
+log_format gateway_json escape=json
+    '{"timestamp":"$time_iso8601","level":"INFO","service":"synkro-api-gateway","message":"request completed","method":"$request_method","path":"$log_path",'
+    '"status":$status,"correlationId":"$correlation_id","requestId":"$request_id",'
+    '"upstreamStatus":"$upstream_status"}';
+
 limit_req_zone $binary_remote_addr zone=gateway:10m rate=${RATE_LIMIT_PER_SECOND}r/s;
 
 # Login brute-force budget: security-threat-model S-1 asks for at most
@@ -48,6 +63,16 @@ limit_req_status 429;
 server {
     listen 8000;
     server_tokens off;
+
+    access_log /dev/stdout gateway_json;
+
+    # NGINX's per-request error messages (unresolved upstream, refused
+    # connection, rate limit) quote the full request line, query included.
+    # Decision: silence them for this server rather than leak personal data.
+    # Cost: the reason behind a 503/429 is no longer in the logs; the access
+    # line still gives status, upstream_status and the correlation id.
+    # Startup and global errors use the main-context error_log and stay.
+    error_log /dev/null emerg;
 
     # add_header is only inherited by blocks that declare none of their
     # own, so every block that adds a header includes this snippet too.

@@ -21,6 +21,17 @@ jobs:
           test -f .env.example
           echo "Common files present."
 
+  customer-log-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Gateway logs carry no query strings, tokens or bodies
+        run: node tests/customer-log-privacy.mjs
+
   smoke-test:
     runs-on: ubuntu-latest
     env:
