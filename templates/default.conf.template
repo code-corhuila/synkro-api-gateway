@@ -24,6 +24,21 @@ map $http_origin $cors_allow_origin {
     "${CORS_ALLOWED_ORIGINS}" "${CORS_ALLOWED_ORIGINS}";
 }
 
+# Access log without the query string. Customer lookups carry personal data
+# (identityDocument, email) in the query, so the log records only the path:
+# $request, $request_uri, $args and $query_string never appear in it, and
+# neither do Authorization or bodies. The correlation id ties a line to the
+# client's request and to the upstream's own logs.
+map $request_uri $log_path {
+    default "";
+    "~^(?<bare_path>[^?]*)" $bare_path;
+}
+
+log_format gateway_json escape=json
+    '{"timestamp":"$time_iso8601","level":"INFO","service":"synkro-api-gateway","message":"request completed","method":"$request_method","path":"$log_path",'
+    '"status":$status,"correlationId":"$correlation_id","requestId":"$request_id",'
+    '"upstreamStatus":"$upstream_status"}';
+
 limit_req_zone $binary_remote_addr zone=gateway:10m rate=${RATE_LIMIT_PER_SECOND}r/s;
 
 # Login brute-force budget: security-threat-model S-1 asks for at most
@@ -45,9 +60,38 @@ limit_req_zone $binary_remote_addr zone=gateway:10m rate=${RATE_LIMIT_PER_SECOND
 limit_req_zone $binary_remote_addr zone=login:10m rate=1r/m;
 limit_req_status 429;
 
+# Empty keys exclude writes, search and the workflow's read-by-id from listing quotas.
+map "$request_method:$uri" $customers_list_client {
+    default "";
+    ~^(GET|HEAD):/api/v1/customers/?$ $binary_remote_addr;
+}
+map $customers_list_client $customers_list_global {
+    "" "";
+    default customers-list;
+}
+# Per-IP leaky bucket: rate is the sustained average; burst bounds immediate work.
+limit_req_zone $customers_list_client zone=customers_list:10m rate=${CUSTOMERS_LIST_RATE_PER_MINUTE}r/m;
+# Aggregate admission also bounds distributed traffic after proxy timeout releases a slot.
+# Conservative MVP budget: three immediate admissions and twelve per minute thereafter.
+# Customers has ten DB slots and bounded SQL operations; listing must leave room for point reads.
+limit_req_zone $customers_list_global zone=customers_list_total:1m rate=12r/m;
+limit_conn_zone $customers_list_global zone=customers_list_active:1m;
+
 server {
     listen 8000;
     server_tokens off;
+    recursive_error_pages on;
+    proxy_connect_timeout 2s;
+
+    access_log /dev/stdout gateway_json;
+
+    # NGINX's per-request error messages (unresolved upstream, refused
+    # connection, rate limit) quote the full request line, query included.
+    # Decision: silence them for this server rather than leak personal data.
+    # Cost: the reason behind a 503/429 is no longer in the logs; the access
+    # line still gives status, upstream_status and the correlation id.
+    # Startup and global errors use the main-context error_log and stay.
+    error_log /dev/null emerg;
 
     # add_header is only inherited by blocks that declare none of their
     # own, so every block that adds a header includes this snippet too.
@@ -83,6 +127,29 @@ server {
         return 429 '{"error":"TOO_MANY_REQUESTS","message":"too many login attempts, retry later","traceId":"$correlation_id"}';
     }
 
+    location @ratelimited_customers_list {
+        default_type application/json;
+        include /etc/nginx/snippets/response-headers.conf;
+        add_header Retry-After ${CUSTOMERS_LIST_RETRY_AFTER} always;
+        return 429 '{"error":"TOO_MANY_REQUESTS","message":"customer list capacity exceeded, retry later","traceId":"$correlation_id"}';
+    }
+
+    location @customers_list {
+        include /etc/nginx/snippets/gateway-authorization.conf;
+        limit_req zone=gateway burst=20 nodelay;
+        limit_req zone=customers_list burst=${CUSTOMERS_LIST_BURST} nodelay;
+        limit_req zone=customers_list_total burst=2 nodelay;
+        limit_conn customers_list_active ${CUSTOMERS_LIST_MAX_CONCURRENT};
+        limit_conn_status 429;
+        error_page 429 = @ratelimited_customers_list;
+        proxy_connect_timeout ${CUSTOMERS_LIST_CONNECT_TIMEOUT_SECONDS}s;
+        proxy_send_timeout ${CUSTOMERS_LIST_SEND_TIMEOUT_SECONDS}s;
+        proxy_read_timeout ${CUSTOMERS_LIST_READ_TIMEOUT_SECONDS}s;
+        proxy_next_upstream off;
+        set $upstream http://synkro-customers-api:8080;
+        proxy_pass $upstream;
+    }
+
     location @upstream_unavailable {
         default_type application/json;
         return 503 '{"error":"SERVICE_UNAVAILABLE","message":"the upstream service is not reachable","traceId":"$correlation_id"}';
@@ -116,6 +183,8 @@ server {
     }
 
     location ~ ^/api/v1/customers(/|$) {
+        error_page 418 = @customers_list;
+        if ($customers_list_client != "") { return 418; }
         include /etc/nginx/snippets/gateway-protected.conf;
         set $upstream http://synkro-customers-api:8080;
         proxy_pass $upstream;

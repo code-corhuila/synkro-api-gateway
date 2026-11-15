@@ -7,6 +7,45 @@ on:
     branches: [develop, qa, main]
 
 jobs:
+  customer-list-budget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Per-client listing rate, aggregate capacity and bounded timeout
+        run: node tests/customer-list-budget.mjs
+
+  customer-list-saga-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: code-corhuila/synkro-customers-api
+          ref: 101e3b77281f7fdcb2ff341266242b1e108f3d20
+          path: customer-source
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          repository: code-corhuila/synkro-workflow
+          ref: 5497cb31e2351dae8ed448101fbe882c023d99e1
+          path: workflow-source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Real saga and point read remain available with listing SQL held
+        env:
+          CUSTOMERS_API_REPO: ${{ github.workspace }}/customer-source
+          WORKFLOW_REPO: ${{ github.workspace }}/workflow-source
+        run: python tests/customer-list-saga.py
+
   check-common-files:
     runs-on: ubuntu-latest
     steps:
@@ -20,6 +59,17 @@ jobs:
           test -f .github/pull_request_template.md
           test -f .env.example
           echo "Common files present."
+
+  customer-log-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Gateway logs carry no query strings, tokens or bodies
+        run: node tests/customer-log-privacy.mjs
 
   smoke-test:
     runs-on: ubuntu-latest

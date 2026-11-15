@@ -1,0 +1,11 @@
+.git
+**/.git
+.env
+**/*.env
+*.pem
+keys/
+customer-source/
+workflow-source/
+node_modules/
+__pycache__/
+tests/
