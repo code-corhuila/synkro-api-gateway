@@ -29,13 +29,13 @@ jobs:
         with:
           persist-credentials: false
           repository: code-corhuila/synkro-customers-api
-          ref: cbd67c302c9649e417eaa69934a9741f3453c679
+          ref: 15ed3a228d76205560df1c57f3105b18bdf7dff2
           path: customer-source
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           repository: code-corhuila/synkro-workflow
-          ref: 9c604f5948f27db6c43b5fca721d455651a81008
+          ref: 6f492f981de81d74ba22e3ce3575b4c89dd0a415
           path: workflow-source
       - uses: actions/setup-python@v5
         with:

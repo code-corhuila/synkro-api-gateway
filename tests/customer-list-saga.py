@@ -10,7 +10,7 @@ import base64, json, os, secrets, shutil, subprocess, tempfile, time, urllib.req
 ROOT=Path(__file__).resolve().parents[1]
 CUSTOMERS=Path(os.environ['CUSTOMERS_API_REPO']).resolve()
 WORKFLOW=Path(os.environ['WORKFLOW_REPO']).resolve()
-PINS={'customers':'cbd67c302c9649e417eaa69934a9741f3453c679','workflow':'9c604f5948f27db6c43b5fca721d455651a81008'}
+PINS={'customers':'15ed3a228d76205560df1c57f3105b18bdf7dff2','workflow':'6f492f981de81d74ba22e3ce3575b4c89dd0a415'}
 OWNER='list-saga-'+uuid.uuid4().hex
 containers=[];images=[];network_created=False;lock_process=None
 def command(args,data=None,timeout=600,check=True):
