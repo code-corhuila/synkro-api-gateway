@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-BASE="http://localhost:8000"
+BASE="${GATEWAY_BASE_URL:-http://localhost:8000}"
 PASS=0
 FAIL=0
 
