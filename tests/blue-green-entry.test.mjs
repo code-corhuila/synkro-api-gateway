@@ -38,7 +38,7 @@ test('real stable entry switches and rolls back while requests and prior hashed 
     network = docker('network','create','--label','io.synkro.edge.test='+run,run);
     for (const color of ['blue','green']) {
       const file = join(folder,color+'.conf');
-      writeFileSync(file, 'events{} http{server{listen80; location/ {return200"'+color+'";}} server{listen8000; location/ {return200"'+color+'";}}}'.replaceAll('listen80','listen 80').replaceAll('listen8000','listen 8000').replaceAll('location/','location /').replaceAll('return200','return 200 '));
+      writeFileSync(file, `events {}\nhttp {\n  server { listen 80; location / { return 200 "${color}"; } }\n  server { listen 8000; location / { return 200 "${color}"; } }\n}\n`);
       const name=run+'-'+color;
       names.push(docker('run','-d','--name',name,'--network',run,'--label','io.synkro.edge.test='+run,
         '--mount','type=bind,source='+file+',target=/tmp/test.conf,readonly','--entrypoint','nginx',image,'-g','daemon off;','-c','/tmp/test.conf'));
@@ -50,7 +50,7 @@ test('real stable entry switches and rolls back while requests and prior hashed 
     names.push(edge);
     const web='http://'+docker('port',edge,'5173/tcp');
     const api='http://'+docker('port',edge,'8000/tcp');
-    const wait=async()=>{for(let n=0;n<100;n++){try{if((await fetch(api+'/health')).ok)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error('entry readiness');};
+    const wait=async()=>{for(let n=0;n<30;n++){try{if((await fetch(api+'/health',{signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error('entry readiness');};
     await wait();
     assert.equal(await (await fetch(web+'/')).text(),'blue');
     const observations=[];

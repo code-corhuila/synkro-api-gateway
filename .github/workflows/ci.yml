@@ -7,6 +7,17 @@ on:
     branches: [develop, qa, main]
 
 jobs:
+  blue-green-entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Stable traffic change, rollback and retained public assets
+        run: node --test tests/blue-green-entry.test.mjs
+
   customer-list-budget:
     runs-on: ubuntu-latest
     timeout-minutes: 15
