@@ -1,0 +1,59 @@
+# ADR-024 / HU-INF-09. Render only validated slot DNS names; never credentials.
+worker_processes 1;
+worker_shutdown_timeout 30s;
+pid /var/run/nginx.pid;
+error_log /dev/stderr crit;
+events { worker_connections 1024; }
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  # The owning inner gateway retains safe request/security events. This outer
+  # entry never duplicates query strings, request lines, headers or bodies.
+  access_log off;
+  # Complete each local HTTP connection after its response. This avoids an
+  # idle keepalive socket being reused while graceful reload closes that worker.
+  keepalive_timeout 0;
+  resolver 127.0.0.11 valid=1s ipv6=off;
+  resolver_timeout 1s;
+  proxy_connect_timeout 2s;
+  proxy_read_timeout 15s;
+  proxy_send_timeout 15s;
+  proxy_http_version 1.1;
+  proxy_next_upstream off;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  add_header X-Synkro-Slot __SLOT__ always;
+
+  server {
+    listen 5173;
+    location = /__release/health { return 200 "ok\n"; }
+    # Only content-hashed public assets can fall back. Stable entry points and
+    # APIs always use the active slot; POST is never replayed to another slot.
+    location ~ "^/(assets/|remotes/(auth|products|sales)/assets/|remotes/customers/).+-[A-Za-z0-9_-]{6,}\\.(js|css|woff2?|png|svg|jpg|webp)$" {
+      if ($request_method !~ ^(GET|HEAD)$) { return 403; }
+      set $active_host http://__ACTIVE_HOST__;
+      proxy_pass $active_host;
+      proxy_intercept_errors on;
+      error_page 404 = @retained_assets;
+    }
+    location @retained_assets {
+      limit_except GET HEAD { deny all; }
+      root /srv/retained;
+      try_files $uri =404;
+      add_header Cache-Control "public, max-age=31536000, immutable" always;
+      add_header X-Synkro-Asset-Source retained always;
+      add_header X-Synkro-Slot __SLOT__ always;
+    }
+    location / {
+      set $active_host http://__ACTIVE_HOST__;
+      proxy_pass $active_host;
+    }
+  }
+  server {
+    listen 8000;
+    location / {
+      set $active_gateway http://__ACTIVE_GATEWAY__;
+      proxy_pass $active_gateway;
+    }
+  }
+}

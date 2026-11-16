@@ -1,0 +1,32 @@
+# The root owns slot preparation, image validation and atomic routing changes.
+services:
+  synkro-edge:
+    image: ${SYNKRO_EDGE_IMAGE:?An exact tested NGINX image identity is required}
+    entrypoint: [nginx]
+    command: [-g, "daemon off;", -c, /etc/synkro-edge/nginx.conf]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5173:5173"
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - type: bind
+        source: ${SYNKRO_EDGE_DIRECTORY:?Protected edge configuration directory required}
+        target: /etc/synkro-edge
+        read_only: true
+      - type: bind
+        source: ${SYNKRO_RETAINED_ASSETS:?Prior public hashed assets required}
+        target: /srv/retained
+        read_only: true
+    networks: [blue, green]
+    healthcheck:
+      test: [CMD, nginx, -t, -c, /etc/synkro-edge/nginx.conf]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+networks:
+  blue:
+    name: ${SYNKRO_BLUE_NETWORK:?Blue network required}
+    external: true
+  green:
+    name: ${SYNKRO_GREEN_NETWORK:?Green network required}
+    external: true
