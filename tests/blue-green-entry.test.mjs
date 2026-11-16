@@ -62,6 +62,8 @@ test('real stable entry switches and rolls back while requests and prior hashed 
         docker('exec',edge,'nginx','-t','-c','/etc/synkro-edge/nginx.conf');
         docker('exec',edge,'nginx','-s','reload','-c','/etc/synkro-edge/nginx.conf');
         for(let n=0;n<100;n++){if(await (await fetch(api+'/health')).text()===color)break;await new Promise(r=>setTimeout(r,20));if(n===99)throw Error('switch not observed');}
+        for(let n=0;n<100&&!observations.some(row=>row.body===color);n++)await new Promise(r=>setTimeout(r,10));
+        assert.ok(observations.some(row=>row.body===color),'continuous observer must sample '+color+' before the next switch');
       }
     } finally {polling=false;await poll;}
     assert.ok(observations.some(row=>row.body==='blue'));
